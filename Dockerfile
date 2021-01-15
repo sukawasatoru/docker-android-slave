@@ -1,37 +1,75 @@
-FROM openjdk:8
+FROM ubuntu:20.04 AS prepare-curl
+ARG DEBIAN_FRONTEND=noninteractive
+RUN rm /etc/apt/apt.conf.d/docker-clean && \
+  echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt \
+  --mount=type=cache,target=/var/lib/apt \
+  apt-get update && apt-get install -y --no-install-recommends \
+  ca-certificates \
+  curl \
+  unzip
 
-MAINTAINER Satoru Sukawa <sukawasatoru.github@outlook.jp>
+FROM prepare-curl AS prepare-jdk
+ARG DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=cache,target=/var/cache/apt \
+  --mount=type=cache,target=/var/lib/apt \
+  apt-get update && apt-get install -y \
+  openjdk-11-jdk
 
-ARG ANDROID_SDK_URL_PATH=https://dl.google.com/android/repository
-ARG ANDROID_SDK_URL_FILE=tools_r25.2.3-linux.zip
-ARG ARG_SDKMANAGER=
-ARG ARG_JAVA_OPTS=
+FROM prepare-jdk AS android-sdk
+ARG DEBIAN_FRONTEND=noninteractive
+ENV ANDROID_HOME=/opt/android-sdk-linux
+ENV ANDROID_SDK_ROOT=$ANDROID_HOME
+ENV PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+RUN mkdir $ANDROID_HOME && \
+  curl -O https://dl.google.com/android/repository/commandlinetools-linux-6858069_latest.zip && \
+  unzip -d $ANDROID_HOME commandlinetools-linux-6858069_latest.zip && \
+  rm commandlinetools-linux-6858069_latest.zip
+RUN echo y | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=$ANDROID_HOME 'cmdline-tools;latest' && \
+  sdkmanager \
+  'build-tools;30.0.3' \
+  'platform-tools' \
+  'platforms;android-27' \
+  'platforms;android-28' \
+  'platforms;android-29' \
+  'platforms;android-30'
 
-ENV JAVA_OPTS ${ARG_JAVA_OPTS}
-ENV MAVEN_OPTS ${ARG_JAVA_OPTS}
-ENV ANDROID_HOME /opt/android-sdk-linux
-ENV PATH ${ANDROID_HOME}/tools:${ANDROID_HOME}/tools/bin:${ANDROID_HOME}/platform-tools:${PATH}
-ENV TERM dumb
+FROM prepare-jdk AS gradle
+ARG DEBIAN_FRONTEND=noninteractive
+ENV GRADLE_USER_HOME=/gradle
+COPY gradle /work/gradle
+COPY gradlew /work
+COPY build.gradle /work
+RUN cd /work && ./gradlew wrapper --gradle-version=6.1.1 --distribution-type=all && \
+  ./gradlew wrapper --gradle-version=6.1.1 --distribution-type=all
 
-RUN dpkg --add-architecture i386 && \
-        apt-get update && \
-        apt-get install -y libc6:i386 libstdc++6:i386 zlib1g:i386 libncurses5:i386 --no-install-recommends && \
-        apt-get clean && \
-        rm -rf /var/lib/apt/lists/* && \
-        curl -O ${ANDROID_SDK_URL_PATH}/${ANDROID_SDK_URL_FILE} && \
-        mkdir -m777 ${ANDROID_HOME} && \
-        unzip ${ANDROID_SDK_URL_FILE} -d ${ANDROID_HOME} && \
-        rm ${ANDROID_SDK_URL_FILE} && \
-        echo y | sdkmanager ${ARG_SDKMANAGER} \
-        'build-tools;25.0.2' \
-        'build-tools;24.0.1' \
-        'extras;android;m2repository' \
-        'extras;google;m2repository' \
-        'extras;google;google_play_services' \
-        platform-tools \
-        'platforms;android-21' \
-        'platforms;android-22' \
-        'platforms;android-23' \
-        'platforms;android-24' \
-        'platforms;android-25' \
-        tools
+FROM prepare-jdk
+ARG DEBIAN_FRONTEND=noninteractive
+RUN --mount=type=cache,target=/var/cache/apt \
+  --mount=type=cache,target=/var/lib/apt \
+  apt-get update && apt-get install -y \
+  bison \
+  build-essential \
+  flex \
+  fontconfig \
+  g++-multilib \
+  gcc-multilib \
+  git-core \
+  gnupg \
+  lib32ncurses5-dev \
+  lib32z1-dev \
+  libc6-dev-i386 \
+  libgl1-mesa-dev \
+  libx11-dev \
+  libxml2-utils \
+  x11proto-core-dev \
+  xsltproc \
+  zip \
+  zlib1g-dev
+ENV ANDROID_HOME=/opt/android-sdk-linux
+ENV ANDROID_SDK_ROOT=$ANDROID_HOME
+ENV PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+COPY --from=android-sdk $ANDROID_HOME $ANDROID_HOME
+ENV GRADLE_USER_HOME=/gradle
+COPY --from=gradle $GRADLE_USER_HOME/wrapper $GRADLE_USER_HOME/wrapper
+RUN chmod -R a+w /gradle
