@@ -21,7 +21,7 @@ FROM prepare-curl AS repo
 ARG DEBIAN_FRONTEND=noninteractive
 RUN curl -sSfO https://storage.googleapis.com/git-repo-downloads/repo
 
-FROM prepare-jdk AS android-sdk
+FROM prepare-jdk AS sdkmanager
 ARG DEBIAN_FRONTEND=noninteractive
 ENV ANDROID_HOME=/opt/android-sdk-linux
 ENV ANDROID_SDK_ROOT=$ANDROID_HOME
@@ -30,14 +30,33 @@ RUN mkdir $ANDROID_HOME && \
   curl -O https://dl.google.com/android/repository/commandlinetools-linux-6858069_latest.zip && \
   unzip -d $ANDROID_HOME commandlinetools-linux-6858069_latest.zip && \
   rm commandlinetools-linux-6858069_latest.zip
-RUN echo y | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=$ANDROID_HOME 'cmdline-tools;latest' && \
-  sdkmanager \
-  'build-tools;30.0.3' \
-  'platform-tools' \
+RUN echo y | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --sdk_root=$ANDROID_HOME \
+  'cmdline-tools;latest' \
+  'emulator' \
+  'patcher;v4'
+
+FROM sdkmanager AS sdkmanager-build-tools
+ARG DEBIAN_FRONTEND=noninteractive
+RUN sdkmanager \
+  'build-tools;30.0.3'
+
+FROM sdkmanager AS sdkmanager-platform-tools
+ARG DEBIAN_FRONTEND=noninteractive
+RUN sdkmanager \
+  'platform-tools'
+
+FROM sdkmanager AS sdkmanager-platforms
+ARG DEBIAN_FRONTEND=noninteractive
+RUN sdkmanager \
   'platforms;android-27' \
   'platforms;android-28' \
   'platforms;android-29' \
   'platforms;android-30'
+
+FROM sdkmanager AS sdkmanager-ndk
+ARG DEBIAN_FRONTEND=noninteractive
+RUN sdkmanager \
+  'ndk;22.0.7026061'
 
 FROM prepare-jdk AS gradle
 ARG DEBIAN_FRONTEND=noninteractive
@@ -75,12 +94,19 @@ RUN --mount=type=cache,target=/var/cache/apt \
   xsltproc \
   zip \
   zlib1g-dev
-RUN update-alternative --install /usr/bin/python python /usr/bin/python3.8 1
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.8 1
 ENV ANDROID_HOME=/opt/android-sdk-linux
 ENV ANDROID_SDK_ROOT=$ANDROID_HOME
 ENV PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
-COPY --from=android-sdk $ANDROID_HOME $ANDROID_HOME
+COPY --from=sdkmanager $ANDROID_HOME $ANDROID_HOME
+COPY --from=sdkmanager-build-tools $ANDROID_HOME/build-tools $ANDROID_HOME/build-tools
+COPY --from=sdkmanager-build-tools $ANDROID_HOME/tools $ANDROID_HOME/tools
+COPY --from=sdkmanager-platform-tools $ANDROID_HOME/platform-tools $ANDROID_HOME/platform-tools
+COPY --from=sdkmanager-platforms $ANDROID_HOME/platforms $ANDROID_HOME/platforms
+COPY --from=sdkmanager-ndk $ANDROID_HOME/ndk $ANDROID_HOME/ndk
 ENV GRADLE_USER_HOME=/gradle
 COPY --from=gradle $GRADLE_USER_HOME/wrapper $GRADLE_USER_HOME/wrapper
 RUN chmod -R a+w $GRADLE_USER_HOME
 COPY --from=repo repo /usr/local/bin/repo
+
+LABEL org.opencontainers.image.source https://github.com/sukawasatoru/docker-android-slave
